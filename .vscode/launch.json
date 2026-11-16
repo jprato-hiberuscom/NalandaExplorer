@@ -1,0 +1,12 @@
+{
+    "version": "0.2.0",
+    "configurations": [
+        {
+            "name": "Nalanda Explorer (HTTPS)",
+            "type": "dotnet",
+            "request": "launch",
+            "projectPath": "${workspaceFolder}\\NalandaExplorer.csproj",
+            "launchSettingsProfile": "https"
+        }
+    ]
+}

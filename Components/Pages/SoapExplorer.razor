@@ -1,0 +1,257 @@
+@page "/soap"
+@using System.ComponentModel.DataAnnotations
+@using System.Net.Http
+@using NalandaExplorer.Services
+@inject NalandaSoapClient SoapClient
+@inject NalandaExplorerState ExplorerState
+
+<PageTitle>Exportación SOAP | Nalanda Explorer</PageTitle>
+
+<div class="rest-page">
+    <header class="rest-heading">
+        <div>
+            <div class="eyebrow"><span class="eyebrow-dot"></span> CONSULTA DOCUMENTADA</div>
+            <h1>Exportación <span>SOAP</span></h1>
+            <p>Consulta los datos de una obra y revisa la respuesta original del servicio.</p>
+        </div>
+        <a class="back-link" href="/">← Conexión</a>
+    </header>
+
+    <div class="rest-workspace">
+        <EditForm Model="@request" OnValidSubmit="RunExportAsync" class="panel query-panel">
+            <DataAnnotationsValidator />
+            <div class="query-panel-heading">
+                <span class="panel-icon" aria-hidden="true">SOAP</span>
+                <div>
+                    <h2>Datos de la consulta</h2>
+                    <p>ExportarObra · solo lectura</p>
+                </div>
+            </div>
+
+            <div class="operation-summary">
+                <p>Credenciales SOAP independientes de la conexión REST.</p>
+                <code>POST /ws/integration/services/obras/exportacion/</code>
+            </div>
+
+            <div class="form-field">
+                <label for="soap-username">Usuario SOAP</label>
+                <InputText id="soap-username"
+                           class="form-control"
+                           autocomplete="username"
+                           maxlength="1024"
+                           @bind-Value="request.Username" />
+                <ValidationMessage For="@(() => request.Username)" />
+            </div>
+
+            <div class="form-field">
+                <label for="soap-password">Contraseña SOAP</label>
+                <InputText id="soap-password"
+                           class="form-control"
+                           type="password"
+                           autocomplete="current-password"
+                           maxlength="1024"
+                           @bind-Value="request.Password" />
+                <ValidationMessage For="@(() => request.Password)" />
+            </div>
+
+            <div class="form-field">
+                <label for="soap-project-code">Código de obra</label>
+                <InputText id="soap-project-code"
+                           class="form-control"
+                           maxlength="500"
+                           @bind-Value="request.ProjectCode" />
+                <ValidationMessage For="@(() => request.ProjectCode)" />
+            </div>
+
+            <div class="form-field">
+                <label for="soap-owner-tax-id">CIF de la empresa propietaria</label>
+                <InputText id="soap-owner-tax-id"
+                           class="form-control"
+                           maxlength="500"
+                           @bind-Value="request.OwnerTaxId" />
+                <ValidationMessage For="@(() => request.OwnerTaxId)" />
+            </div>
+
+            @if (!string.IsNullOrWhiteSpace(errorMessage))
+            {
+                <div class="alert alert-danger" role="alert">@errorMessage</div>
+            }
+
+            <button class="btn btn-primary query-button" type="submit" disabled="@isQuerying">
+                @(isQuerying ? "Consultando..." : "Exportar obra")
+            </button>
+            <p class="read-only-note">La contraseña se borra al terminar cada petición.</p>
+        </EditForm>
+
+        <section class="response-panel" aria-labelledby="soap-response-title">
+            <div class="response-title-row">
+                <div>
+                    <div class="section-kicker">RESPUESTA</div>
+                    <h2 id="soap-response-title">Resultado de Nalanda</h2>
+                </div>
+                @if (response is not null)
+                {
+                    <span class="response-status @(response.StatusCode >= 400 || response.FaultMessage is not null ? "response-status-error" : "response-status-ok")">
+                        HTTP @response.StatusCode
+                    </span>
+                }
+            </div>
+
+            @if (response is null)
+            {
+                <div class="empty-response">
+                    <div class="empty-response-icon" aria-hidden="true">SOAP</div>
+                    <h3>Aún no hay resultados</h3>
+                    <p>Completa los datos de la obra para ver aquí un resumen legible y la respuesta XML original.</p>
+                </div>
+            }
+            else
+            {
+                <div class="response-meta">
+                    <span>@response.ReasonPhrase</span>
+                    <span>@response.ElapsedMilliseconds ms</span>
+                    <span>@response.ContentType</span>
+                </div>
+
+                @if (response.StatusCode >= 400)
+                {
+                    <div class="alert alert-danger" role="alert">
+                        Nalanda respondió con HTTP @response.StatusCode.
+                    </div>
+                }
+
+                @if (!string.IsNullOrWhiteSpace(response.FaultMessage))
+                {
+                    <div class="alert alert-danger" role="alert">
+                        Nalanda informó: @response.FaultMessage
+                    </div>
+                }
+
+                @if (!response.IsXml)
+                {
+                    <p class="response-format-note">La respuesta no es XML válida; se muestra el contenido recibido sin interpretar.</p>
+                }
+                else if (response.Project is { } project)
+                {
+                    <div class="response-summary">
+                        <div class="summary-item">
+                            <span>Obra</span>
+                            <strong>@Display(project.Code)</strong>
+                        </div>
+                        <div class="summary-item">
+                            <span>CIF propietario</span>
+                            <strong>@Display(project.OwnerTaxId)</strong>
+                        </div>
+                        <div class="summary-item">
+                            <span>Contratas</span>
+                            <strong>@project.Contractors.Count</strong>
+                        </div>
+                        <div class="summary-item">
+                            <span>Trabajadores</span>
+                            <strong>@project.Contractors.Sum(contractor => contractor.Workers.Count)</strong>
+                        </div>
+                        <div class="summary-item">
+                            <span>Maquinarias</span>
+                            <strong>@project.Contractors.Sum(contractor => contractor.Machinery.Count)</strong>
+                        </div>
+                        <div class="summary-item">
+                            <span>Documentos</span>
+                            <strong>@project.Contractors.Sum(contractor => contractor.Documents.Count)</strong>
+                        </div>
+                    </div>
+
+                    @if (project.Contractors.Count == 0)
+                    {
+                        <p class="field-help">La respuesta no contiene contratas para esta obra.</p>
+                    }
+
+                    @foreach (var contractor in project.Contractors)
+                    {
+                        <SoapContractorSummary Contractor="@contractor" />
+                    }
+                }
+                else if (response.IsXml && string.IsNullOrWhiteSpace(response.FaultMessage))
+                {
+                    <p class="field-help">La respuesta XML no contiene información de exportación de obra.</p>
+                }
+
+                <details class="raw-response">
+                    <summary>Ver respuesta XML original</summary>
+                    <pre>@response.Body</pre>
+                </details>
+            }
+        </section>
+    </div>
+</div>
+
+@code {
+    private readonly ExportRequest request = new();
+    private bool isQuerying;
+    private string? errorMessage;
+    private NalandaSoapResponse? response;
+
+    protected override void OnInitialized()
+    {
+        response = ExplorerState.LastSoapResponse;
+    }
+
+    private async Task RunExportAsync()
+    {
+        errorMessage = null;
+        isQuerying = true;
+
+        try
+        {
+            var result = await SoapClient.ExportProjectAsync(
+                request.Username,
+                request.Password,
+                request.ProjectCode,
+                request.OwnerTaxId);
+            response = result;
+            ExplorerState.StoreSoapResult(result);
+        }
+        catch (ArgumentException exception)
+        {
+            errorMessage = exception.Message;
+        }
+        catch (HttpRequestException)
+        {
+            errorMessage = "No se pudo completar la consulta. Comprueba tu conexión e inténtalo de nuevo.";
+        }
+        catch (InvalidDataException exception)
+        {
+            errorMessage = exception.Message;
+        }
+        catch (TaskCanceledException)
+        {
+            errorMessage = "La consulta agotó el tiempo de espera. Inténtalo de nuevo.";
+        }
+        finally
+        {
+            request.Password = string.Empty;
+            isQuerying = false;
+        }
+    }
+
+    private static string Display(string? value) =>
+        string.IsNullOrWhiteSpace(value) ? "—" : value;
+
+    private sealed class ExportRequest
+    {
+        [Required(ErrorMessage = "Introduce tu usuario SOAP.")]
+        [MaxLength(1024)]
+        public string Username { get; set; } = string.Empty;
+
+        [Required(ErrorMessage = "Introduce tu contraseña SOAP.")]
+        [MaxLength(1024)]
+        public string Password { get; set; } = string.Empty;
+
+        [Required(ErrorMessage = "Introduce el código de obra.")]
+        [MaxLength(500)]
+        public string ProjectCode { get; set; } = string.Empty;
+
+        [Required(ErrorMessage = "Introduce el CIF propietario de la obra.")]
+        [MaxLength(500)]
+        public string OwnerTaxId { get; set; } = string.Empty;
+    }
+}

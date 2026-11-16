@@ -1,0 +1,116 @@
+@using Microsoft.AspNetCore.Components
+
+<article class="soap-contractor">
+    <div class="soap-contractor-heading">
+        <div>
+            <h3>@Display(Contractor.CompanyName)</h3>
+            <p>CIF @Display(Contractor.TaxId) · ID @Display(Contractor.Id)</p>
+        </div>
+        <span>@Contractor.Documents.Count documento(s)</span>
+    </div>
+    <p class="soap-dates">
+        Entrada: @Display(Contractor.EntryDate) · Salida: @Display(Contractor.ExitDate)
+    </p>
+
+    @if (Contractor.Workers.Count > 0)
+    {
+        <details class="soap-subsection">
+            <summary>Trabajadores (@Contractor.Workers.Count)</summary>
+            <ul>
+                @foreach (var worker in Contractor.Workers)
+                {
+                    <li>
+                        <strong>@Display(worker.Name)</strong>
+                        <span>CIF @Display(worker.TaxId) · Entrada: @Display(worker.EntryDate) · Salida: @Display(worker.ExitDate) · @worker.DocumentCount documento(s)</span>
+                    </li>
+                }
+            </ul>
+        </details>
+    }
+
+    @if (Contractor.Machinery.Count > 0)
+    {
+        <details class="soap-subsection">
+            <summary>Maquinaria (@Contractor.Machinery.Count)</summary>
+            <ul>
+                @foreach (var machine in Contractor.Machinery)
+                {
+                    <li>
+                        <strong>Matrícula @Display(machine.Registration)</strong>
+                        <span>@machine.DocumentCount documento(s)</span>
+                    </li>
+                }
+            </ul>
+        </details>
+    }
+
+    @if (Contractor.Documents.Count > 0)
+    {
+        <details class="soap-subsection">
+            <summary>Documentos (@Contractor.Documents.Count)</summary>
+            <ul>
+                @foreach (var document in Contractor.Documents)
+                {
+                    var documentUrl = GetSafeDocumentUrl(document.Url);
+                    <li>
+                        <strong>@Display(string.IsNullOrWhiteSpace(document.Description) ? document.Type : document.Description)</strong>
+                        <span>Estado: @Display(document.Status) · Tipo: @Display(document.Type)</span>
+                        <span>Carga: @Display(document.UploadedAt) · Emisión: @Display(document.IssuedAt) · Vencimiento: @Display(document.ExpiresAt)</span>
+                        @if (!string.IsNullOrWhiteSpace(document.Url))
+                        {
+                            <span class="soap-document-url">@(documentUrl ?? document.Url)</span>
+                        }
+                        @if (documentUrl is not null)
+                        {
+                            <a class="soap-document-link"
+                               href="@documentUrl"
+                               target="_blank"
+                               rel="noopener noreferrer">Abrir documento</a>
+                        }
+                        else if (!string.IsNullOrWhiteSpace(document.Url))
+                        {
+                            <span class="soap-document-link-unavailable">No se puede abrir: el enlace debe pertenecer al dominio HTTPS de Nalanda.</span>
+                        }
+                    </li>
+                }
+            </ul>
+        </details>
+    }
+</article>
+
+@code {
+    private static readonly Uri NalandaDocumentBaseUri = new("https://api.nalandaglobal.com/");
+
+    [Parameter, EditorRequired]
+    public NalandaSoapContractor Contractor { get; set; } = null!;
+
+    private static string Display(string? value) =>
+        string.IsNullOrWhiteSpace(value) ? "—" : value;
+
+    private static string? GetSafeDocumentUrl(string? value)
+    {
+        if (!Uri.TryCreate(value?.Trim(), UriKind.RelativeOrAbsolute, out var candidate))
+        {
+            return null;
+        }
+
+        Uri? resolved;
+        if (candidate.IsAbsoluteUri)
+        {
+            resolved = candidate;
+        }
+        else if (!Uri.TryCreate(NalandaDocumentBaseUri, candidate, out resolved))
+        {
+            return null;
+        }
+
+        return resolved.Scheme == Uri.UriSchemeHttps &&
+               string.Equals(
+                   resolved.Host,
+                   NalandaDocumentBaseUri.Host,
+                   StringComparison.OrdinalIgnoreCase) &&
+               string.IsNullOrEmpty(resolved.UserInfo)
+            ? resolved.AbsoluteUri
+            : null;
+    }
+}

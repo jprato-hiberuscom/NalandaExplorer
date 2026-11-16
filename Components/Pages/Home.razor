@@ -1,0 +1,170 @@
+﻿@page "/"
+@using System.ComponentModel.DataAnnotations
+@using System.Net
+@using System.Net.Http
+@using System.Text.Json
+@using NalandaExplorer.Services
+@inject NalandaAuthenticationService AuthenticationService
+@inject NalandaSession Session
+@inject NalandaExplorerState ExplorerState
+
+<PageTitle>Conexión | Nalanda Explorer</PageTitle>
+
+<div class="dashboard">
+    <header class="page-heading">
+        <div class="eyebrow"><span class="eyebrow-dot"></span> PORTAL DE INTEGRACIÓN</div>
+        <h1>Conecta con <span>Nalanda</span></h1>
+        <p>Consulta los datos de tus obras desde un único espacio de trabajo.</p>
+    </header>
+
+    <div class="connection-grid">
+        <section class="panel login-panel" aria-labelledby="connection-title">
+            @if (Session.IsAuthenticated)
+            {
+                <div class="panel-heading">
+                    <div class="panel-icon panel-icon-success" aria-hidden="true">✓</div>
+                    <div>
+                        <h2 id="connection-title">Conexión REST activa</h2>
+                        <p>La sesión está lista para realizar consultas.</p>
+                    </div>
+                </div>
+
+                @if (Session.ExpiresAtUtc is { } expiresAt)
+                {
+                    <p class="session-expiry">El token vence a las @expiresAt.ToLocalTime().ToString("t").</p>
+                }
+
+                <div class="session-actions">
+                    <a class="btn btn-primary connect-button" href="/rest">Abrir explorador REST</a>
+                    <button class="btn btn-outline-secondary sign-out-button" @onclick="SignOut">
+                        Cerrar sesión
+                    </button>
+                </div>
+            }
+            else
+            {
+                <div class="panel-heading">
+                    <div class="panel-icon" aria-hidden="true">01</div>
+                    <div>
+                        <h2 id="connection-title">Conecta tu cuenta REST</h2>
+                        <p>Usaremos tus credenciales para solicitar un token temporal a Nalanda.</p>
+                    </div>
+                </div>
+
+                <EditForm Model="credentials" OnValidSubmit="SignInAsync">
+                    <DataAnnotationsValidator />
+                    <div class="form-field">
+                        <label for="nalanda-email">Correo electrónico</label>
+                        <InputText id="nalanda-email"
+                                   class="form-control"
+                                   type="email"
+                                   autocomplete="username"
+                                   @bind-Value="credentials.Username" />
+                        <ValidationMessage For="@(() => credentials.Username)" />
+                    </div>
+                    <div class="form-field">
+                        <label for="nalanda-password">Contraseña</label>
+                        <InputText id="nalanda-password"
+                                   class="form-control"
+                                   type="password"
+                                   autocomplete="current-password"
+                                   @bind-Value="credentials.Password" />
+                        <ValidationMessage For="@(() => credentials.Password)" />
+                    </div>
+
+                    @if (!string.IsNullOrWhiteSpace(errorMessage))
+                    {
+                        <div class="alert alert-danger" role="alert">@errorMessage</div>
+                    }
+
+                    <button class="btn btn-primary connect-button" type="submit" disabled="@isSubmitting">
+                        @(isSubmitting ? "Conectando..." : "Conectar con Nalanda")
+                    </button>
+                </EditForm>
+                <p class="privacy-note">Las credenciales no se guardan y la contraseña se elimina al terminar el intento.</p>
+            }
+        </section>
+
+        <aside class="info-panel" aria-label="Información de conexión">
+            <div class="info-panel-top">
+                <span class="info-label">API OFICIAL</span>
+                <span class="status-pill">
+                    <span class="status-dot @(Session.IsAuthenticated ? "status-dot-online" : "")"></span>
+                    @(Session.IsAuthenticated ? "Conectada" : "Sin conectar")
+                </span>
+            </div>
+            <div class="info-illustration" aria-hidden="true">
+                <div class="illustration-orbit orbit-one"></div>
+                <div class="illustration-orbit orbit-two"></div>
+                <div class="illustration-core">N</div>
+                <span class="illustration-node node-one">REST</span>
+                <span class="illustration-node node-two">SOAP</span>
+            </div>
+            <h2>Datos listos para explorar</h2>
+            <p>Acceso de solo lectura a las consultas documentadas, con respuestas disponibles en formato legible y original.</p>
+            <div class="info-footer"><span>HTTPS</span><span>·</span><span>Token temporal</span><span>·</span><span>Solo lectura</span></div>
+        </aside>
+    </div>
+</div>
+
+@code {
+    private readonly LoginCredentials credentials = new();
+    private bool isSubmitting;
+    private string? errorMessage;
+
+    private async Task SignInAsync()
+    {
+        errorMessage = null;
+        isSubmitting = true;
+
+        try
+        {
+            await AuthenticationService.SignInAsync(credentials.Username, credentials.Password);
+            ExplorerState.ClearRestResult();
+        }
+        catch (NalandaAuthenticationException exception)
+        {
+            errorMessage = exception.StatusCode == HttpStatusCode.NotAcceptable
+                ? "Nalanda rechazó el formato de respuesta solicitado (HTTP 406). Se solicitó JSON; confirma con Nalanda que este formato está habilitado si el error continúa."
+                : $"Nalanda rechazó el acceso (HTTP {(int)exception.StatusCode}). Revisa tus credenciales y permisos.";
+        }
+        catch (HttpRequestException)
+        {
+            errorMessage = "No se pudo conectar con Nalanda. Comprueba tu conexión e inténtalo de nuevo.";
+        }
+        catch (JsonException)
+        {
+            errorMessage = "Nalanda devolvió una respuesta de autenticación que no se pudo interpretar.";
+        }
+        catch (InvalidDataException)
+        {
+            errorMessage = "Nalanda devolvió una respuesta de token no válida.";
+        }
+        catch (TaskCanceledException)
+        {
+            errorMessage = "La conexión con Nalanda agotó el tiempo de espera. Inténtalo de nuevo.";
+        }
+        finally
+        {
+            credentials.Password = string.Empty;
+            isSubmitting = false;
+        }
+    }
+
+    private void SignOut()
+    {
+        Session.Clear();
+        ExplorerState.ClearRestResult();
+        errorMessage = null;
+    }
+
+    private sealed class LoginCredentials
+    {
+        [Required(ErrorMessage = "Introduce tu correo electrónico.")]
+        [EmailAddress(ErrorMessage = "Introduce un correo electrónico válido.")]
+        public string Username { get; set; } = string.Empty;
+
+        [Required(ErrorMessage = "Introduce tu contraseña.")]
+        public string Password { get; set; } = string.Empty;
+    }
+}

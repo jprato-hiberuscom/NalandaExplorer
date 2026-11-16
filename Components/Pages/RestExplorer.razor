@@ -1,0 +1,388 @@
+@page "/rest"
+@using System.Net.Http
+@using System.Text.Json
+@using NalandaExplorer.Services
+@inject NalandaApiClient ApiClient
+@inject NalandaSession Session
+@inject NalandaExplorerState ExplorerState
+
+<PageTitle>Explorador REST | Nalanda Explorer</PageTitle>
+
+<div class="rest-page">
+    <header class="rest-heading">
+        <div>
+            <div class="eyebrow"><span class="eyebrow-dot"></span> CONSULTAS DOCUMENTADAS</div>
+            <h1>Explorador <span>REST</span></h1>
+            <p>Selecciona una consulta GET de la API de Nalanda y explora su respuesta.</p>
+        </div>
+        <a class="back-link" href="/">← Conexión</a>
+    </header>
+
+    @if (!Session.IsAuthenticated)
+    {
+        <div class="alert alert-warning auth-required" role="alert">
+            Necesitas una sesión REST activa para consultar la API.
+            <a href="/">Conectar cuenta</a>
+        </div>
+    }
+
+    <div class="rest-workspace">
+        <section class="panel query-panel" aria-labelledby="query-title">
+            <div class="query-panel-heading">
+                <span class="panel-icon" aria-hidden="true">GET</span>
+                <div>
+                    <h2 id="query-title">Configura la consulta</h2>
+                    <p>Las rutas están limitadas a operaciones GET documentadas.</p>
+                </div>
+            </div>
+
+            <div class="form-field">
+                <label for="api-operation">Operación</label>
+                <select id="api-operation" class="form-select" value="@selectedOperationId" @onchange="SelectOperation">
+                    @foreach (var group in NalandaApiCatalog.Operations.GroupBy(operation => operation.Category))
+                    {
+                        <optgroup label="@group.Key">
+                            @foreach (var operation in group)
+                            {
+                                <option value="@operation.Id">@operation.Name</option>
+                            }
+                        </optgroup>
+                    }
+                </select>
+            </div>
+
+            <div class="operation-summary">
+                <p>@SelectedOperation.Description</p>
+                <code>GET @SelectedOperation.PathTemplate</code>
+            </div>
+
+            @foreach (var parameter in SelectedOperation.Parameters)
+            {
+                <div class="form-field">
+                    <label for="@InputId(parameter.Name)">
+                        @parameter.Label
+                        @if (parameter.Required)
+                        {
+                            <span class="required-mark" aria-label="obligatorio">*</span>
+                        }
+                    </label>
+
+                    @if (parameter.Options is { Count: > 0 } options)
+                    {
+                        <select id="@InputId(parameter.Name)"
+                                class="form-select"
+                                @bind="parameterValues[parameter.Name]">
+                            <option value="">Todos</option>
+                            @foreach (var option in options)
+                            {
+                                <option value="@option">@option</option>
+                            }
+                        </select>
+                    }
+                    else
+                    {
+                        <input id="@InputId(parameter.Name)"
+                               class="form-control"
+                               type="@parameter.InputType"
+                               placeholder="@parameter.Placeholder"
+                               min="@(parameter.InputType == "number" ? "0" : null)"
+                               @bind="parameterValues[parameter.Name]" />
+                    }
+
+                    @if (!string.IsNullOrWhiteSpace(parameter.Description))
+                    {
+                        <small class="field-help">@parameter.Description</small>
+                    }
+                </div>
+            }
+
+            @if (SelectedOperation.AtLeastOneRequired is { Count: > 0 } alternatives)
+            {
+                <p class="field-help">Indica al menos uno: @string.Join(" o ", alternatives).</p>
+            }
+
+            @if (SelectedOperation.SupportsJsonBody)
+            {
+                <div class="form-field">
+                    <label for="search-body">Cuerpo JSON de búsqueda <span>(opcional)</span></label>
+                    <textarea id="search-body"
+                              class="form-control json-input"
+                              rows="4"
+                              placeholder='{"code":"001m"}'
+                              @bind="jsonBody"></textarea>
+                    <small class="field-help">Solo se admite un objeto JSON; máximo 32 KB.</small>
+                </div>
+            }
+
+            @if (!string.IsNullOrWhiteSpace(errorMessage))
+            {
+                <div class="alert alert-danger" role="alert">@errorMessage</div>
+            }
+
+            <button class="btn btn-primary query-button"
+                    disabled="@(!Session.IsAuthenticated || isQuerying)"
+                    @onclick="RunQueryAsync">
+                @(isQuerying ? "Consultando..." : "Ejecutar consulta")
+            </button>
+            <p class="read-only-note">Solo lectura · Las respuestas no se guardan en la aplicación</p>
+        </section>
+
+        <section class="response-panel" aria-labelledby="response-title">
+            <div class="response-title-row">
+                <div>
+                    <div class="section-kicker">RESPUESTA</div>
+                    <h2 id="response-title">Resultado de Nalanda</h2>
+                </div>
+                @if (response is not null)
+                {
+                    <span class="response-status @(response.StatusCode >= 400 ? "response-status-error" : "response-status-ok")">
+                        HTTP @response.StatusCode
+                    </span>
+                }
+            </div>
+
+            @if (response is null)
+            {
+                <div class="empty-response">
+                    <div class="empty-response-icon" aria-hidden="true">{ }</div>
+                    <h3>Aún no hay resultados</h3>
+                    <p>Completa los parámetros y ejecuta una consulta para ver aquí los datos y la respuesta original.</p>
+                </div>
+            }
+            else
+            {
+                <div class="response-meta">
+                    <span>@response.ReasonPhrase</span>
+                    <span>@response.ElapsedMilliseconds ms</span>
+                    <span>@response.ContentType</span>
+                </div>
+
+                @if (response.StatusCode == 401)
+                {
+                    <div class="alert alert-warning" role="alert">
+                        Nalanda no autorizó la consulta. La sesión se ha cerrado; vuelve a conectar tu cuenta.
+                    </div>
+                }
+                else if (response.StatusCode >= 400)
+                {
+                    <div class="alert alert-danger" role="alert">
+                        Nalanda respondió con HTTP @response.StatusCode. Consulta el detalle de la respuesta original.
+                    </div>
+                }
+
+                @if (!response.IsJson)
+                {
+                    <p class="response-format-note">La respuesta no es JSON válida; se muestra el contenido recibido sin interpretar.</p>
+                }
+
+                @if (response.Json is { } json && GetRows(json) is { Count: > 0 } rows)
+                {
+                    @if (json.ValueKind == JsonValueKind.Object)
+                    {
+                        <div class="response-summary">
+                            @foreach (var property in GetSummaryProperties(json))
+                            {
+                                <div class="summary-item">
+                                    <span>@property.Name</span>
+                                    <strong>@FormatValue(property.Value)</strong>
+                                </div>
+                            }
+                        </div>
+                    }
+
+                    var columns = GetColumns(rows);
+                    <div class="response-table-wrap">
+                        <table class="response-table">
+                            <thead>
+                                <tr>
+                                    @foreach (var column in columns)
+                                    {
+                                        <th scope="col">@column</th>
+                                    }
+                                </tr>
+                            </thead>
+                            <tbody>
+                                @foreach (var row in rows)
+                                {
+                                    <tr>
+                                        @foreach (var column in columns)
+                                        {
+                                            <td>@FormatCell(row, column)</td>
+                                        }
+                                    </tr>
+                                }
+                            </tbody>
+                        </table>
+                    </div>
+                    <p class="table-caption">@rows.Count elemento(s) en esta respuesta.</p>
+                }
+                else if (response.Json is { } objectJson && objectJson.ValueKind == JsonValueKind.Object)
+                {
+                    <div class="response-summary response-summary-single">
+                        @foreach (var property in GetSummaryProperties(objectJson))
+                        {
+                            <div class="summary-item">
+                                <span>@property.Name</span>
+                                <strong>@FormatValue(property.Value)</strong>
+                            </div>
+                        }
+                    </div>
+                }
+
+                <details class="raw-response">
+                    <summary>Ver respuesta JSON original</summary>
+                    <pre>@response.Body</pre>
+                </details>
+            }
+        </section>
+    </div>
+</div>
+
+@code {
+    private string selectedOperationId = NalandaApiCatalog.Operations[0].Id;
+    private Dictionary<string, string?> parameterValues = new(StringComparer.Ordinal);
+    private string jsonBody = string.Empty;
+    private bool isQuerying;
+    private string? errorMessage;
+    private NalandaApiResponse? response;
+
+    private NalandaApiOperation SelectedOperation =>
+        NalandaApiCatalog.Operations.First(operation => operation.Id == selectedOperationId);
+
+    protected override void OnInitialized()
+    {
+        var previousOperation = NalandaApiCatalog.Operations.FirstOrDefault(
+            operation => operation.Id == ExplorerState.LastRestOperationId);
+        selectedOperationId = previousOperation?.Id ?? NalandaApiCatalog.Operations[0].Id;
+        parameterValues = CreateParameterValues(SelectedOperation);
+        response = ExplorerState.LastRestResponse;
+    }
+
+    private void SelectOperation(ChangeEventArgs args)
+    {
+        if (args.Value is not string operationId)
+        {
+            errorMessage = "Selecciona una operación válida.";
+            return;
+        }
+
+        var operation = NalandaApiCatalog.Operations.FirstOrDefault(item => item.Id == operationId);
+        if (operation is null)
+        {
+            errorMessage = "La operación seleccionada no está disponible.";
+            return;
+        }
+
+        selectedOperationId = operation.Id;
+        parameterValues = CreateParameterValues(operation);
+        jsonBody = string.Empty;
+        response = null;
+        errorMessage = null;
+    }
+
+    private async Task RunQueryAsync()
+    {
+        errorMessage = null;
+        isQuerying = true;
+
+        try
+        {
+            var operation = SelectedOperation;
+            var result = await ApiClient.GetAsync(operation, parameterValues, jsonBody);
+            response = result;
+            ExplorerState.StoreRestResult(operation.Id, result);
+        }
+        catch (ArgumentException exception)
+        {
+            errorMessage = exception.Message;
+        }
+        catch (InvalidOperationException exception)
+        {
+            errorMessage = exception.Message;
+        }
+        catch (JsonException)
+        {
+            errorMessage = "El cuerpo de búsqueda no contiene un objeto JSON válido.";
+        }
+        catch (InvalidDataException exception)
+        {
+            errorMessage = exception.Message;
+        }
+        catch (HttpRequestException)
+        {
+            errorMessage = "No se pudo completar la consulta. Comprueba tu conexión e inténtalo de nuevo.";
+        }
+        catch (TaskCanceledException)
+        {
+            errorMessage = "La consulta agotó el tiempo de espera. Inténtalo de nuevo.";
+        }
+        finally
+        {
+            isQuerying = false;
+        }
+    }
+
+    private static Dictionary<string, string?> CreateParameterValues(NalandaApiOperation operation) =>
+        operation.Parameters.ToDictionary(
+            parameter => parameter.Name,
+            parameter => parameter.DefaultValue,
+            StringComparer.Ordinal);
+
+    private static string InputId(string name) => $"parameter-{name}";
+
+    private static IReadOnlyList<JsonElement> GetRows(JsonElement json)
+    {
+        if (json.ValueKind == JsonValueKind.Array)
+        {
+            return json.EnumerateArray().ToArray();
+        }
+
+        if (json.ValueKind == JsonValueKind.Object &&
+            json.TryGetProperty("content", out var content) &&
+            content.ValueKind == JsonValueKind.Array)
+        {
+            return content.EnumerateArray().ToArray();
+        }
+
+        return Array.Empty<JsonElement>();
+    }
+
+    private static IReadOnlyList<JsonProperty> GetSummaryProperties(JsonElement json)
+    {
+        if (json.ValueKind != JsonValueKind.Object)
+        {
+            return Array.Empty<JsonProperty>();
+        }
+
+        return json.EnumerateObject()
+            .Where(property => property.Name != "content")
+            .ToArray();
+    }
+
+    private static IReadOnlyList<string> GetColumns(IReadOnlyList<JsonElement> rows)
+    {
+        if (rows.Count == 0 || rows[0].ValueKind != JsonValueKind.Object)
+        {
+            return Array.Empty<string>();
+        }
+
+        return rows[0].EnumerateObject().Select(property => property.Name).ToArray();
+    }
+
+    private static string FormatCell(JsonElement row, string propertyName) =>
+        row.ValueKind == JsonValueKind.Object && row.TryGetProperty(propertyName, out var value)
+            ? FormatValue(value)
+            : "—";
+
+    private static string FormatValue(JsonElement value) =>
+        value.ValueKind switch
+        {
+            JsonValueKind.Null or JsonValueKind.Undefined => "—",
+            JsonValueKind.True => "Sí",
+            JsonValueKind.False => "No",
+            JsonValueKind.String => value.GetString() ?? "—",
+            JsonValueKind.Array => $"{value.GetArrayLength()} elemento(s)",
+            JsonValueKind.Object => JsonSerializer.Serialize(value),
+            _ => value.ToString()
+        };
+}

@@ -1,0 +1,45 @@
+﻿@inherits LayoutComponentBase
+@implements IDisposable
+@inject NalandaExplorer.Services.NalandaSession Session
+
+<div class="app-shell">
+    <aside class="sidebar">
+        <NavMenu />
+        <div class="sidebar-session">
+            <span class="status-dot @(Session.IsAuthenticated ? "status-dot-online" : "")"></span>
+            <span>@(Session.IsAuthenticated ? "Sesión REST activa" : "Sin sesión REST")</span>
+        </div>
+    </aside>
+
+    <main class="main-content">
+        <header class="top-row">
+            <span class="breadcrumb-label">ESPACIO DE TRABAJO</span>
+            <span class="top-row-service"><span class="status-dot status-dot-online"></span> API Nalanda</span>
+        </header>
+        <article class="content">
+            @Body
+        </article>
+    </main>
+</div>
+
+@code {
+    protected override void OnInitialized()
+    {
+        Session.Changed += OnSessionChanged;
+    }
+
+    private void OnSessionChanged()
+    {
+        _ = InvokeAsync(StateHasChanged);
+    }
+
+    public void Dispose()
+    {
+        Session.Changed -= OnSessionChanged;
+    }
+}
+<div id="blazor-error-ui" data-nosnippet>
+    An unhandled error has occurred.
+    <a href="." class="reload">Reload</a>
+    <span class="dismiss">🗙</span>
+</div>
