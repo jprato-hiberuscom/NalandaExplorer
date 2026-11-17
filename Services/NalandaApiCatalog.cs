@@ -61,7 +61,9 @@ public static class NalandaApiCatalog
             ], AcceptV1, SupportsJsonBody: true),
         new("contractors.get", "Contratas", "Consultar contrata",
             "Obtiene una contrata por su identificador.", "/contractors/{id}",
-            [new("id", "Identificador de contrata", NalandaApiParameterLocation.Path, Required: true)],
+            [new("id", "ID Nalanda de contrata", NalandaApiParameterLocation.Path, Required: true,
+                Placeholder: "01H3KVBK79F0B8FYD2YV85BHVF",
+                Description: "Usa el campo id de «Listar contratas», no el código visible (p. ej. 001.25061).")],
             AcceptV1),
 
         new("companies.subcontractors", "Empresas", "Subcontratas de una empresa",
